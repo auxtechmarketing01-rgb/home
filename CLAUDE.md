@@ -1,3 +1,124 @@
+# Pathforge
+
+A private goal-tracking platform for a small closed group (a family, a friend circle). Each member
+sets **Goals**, breaks one into a **Roadmap** of ordered statusable items, runs **Focus Sprints**
+(Pomodoro / countdown / stopwatch) against those items so real time rolls up
+Sprint → Roadmap Item → Goal → Group leaderboard, and compares progress inside an invite-only
+**Group**. A **Mentorship** is a relationship between two members that lets a mentor set time
+budgets and due dates on a mentee's roadmap items and attach **Rewards** to them.
+
+Laravel 12 REST API (`/api/v1`) with Sanctum cookie SPA auth, consumed by a standalone Vue 3 + TS
+SPA. MySQL 8, Redis, Horizon queues. Real-time delivery over Pusher Channels; Web Push (VAPID) for
+the closed-browser case.
+
+## Current state
+
+**The backend is complete: all four phases of `docs/04-BACKEND-STEPS.md` are built and green.**
+
+- Phase 1 — Auth (incl. password reset + email verification), Categories, Goals, Roadmap items with
+  batch reorder.
+- Phase 2 — Focus Sprints (full lifecycle, CSV export), Resources (file/link/note), `goal_stats`,
+  `StreakService`/`ProjectionService`, `RecalculateGoalStatsJob`, `NotifyExpiredSprintsJob`,
+  `CleanupStaleSprintsJob`, Web Push subscriptions.
+- Phase 3 — Groups + invites, group goal visibility, `LeaderboardService` (cached, explicitly
+  invalidated), Squad Challenges, Analytics endpoints, per-member `streaks`, gamification
+  (XP/levels/badges), `DailyStreakCheckJob`, `SendSprintReminderJob`, admin routes.
+- Phase 4 — Mentorships, the `assign` ability, the mentorship branch on `GoalPolicy::view`, the
+  full Reward state machine, `MarkRewardsEarnedForItemAction`, `SendRewardClaimReminderJob`, the
+  FR-RWD-06 ledger, mentor dashboard.
+- Cross-cutting — Pusher broadcasting + the notification layer, rate limiting, structured job
+  failure logging, `/api/v1` versioning.
+
+**There is no Vue SPA at all yet** — `docs/05-FRONTEND-STEPS.md` is entirely unbuilt, and that is
+the next body of work.
+
+78 API routes, 5 scheduled jobs, 442 Pest tests. Run the suite with `php artisan test --compact`
+and format with `vendor/bin/pint` before finalising any change.
+
+Local environment differs from the docs in three ways worth knowing before you debug something:
+MariaDB 10.4 rather than MySQL 8 (avoid MySQL-8-only SQL), PHP 8.2 rather than 8.3+, and Redis is
+not running — so cache/queue code must go through the `Cache`/queue facades and stay driver-agnostic.
+Horizon is installed and configured for the deploy `redis` connection but cannot run locally
+(needs `ext-pcntl`/`ext-posix`); local work uses the `database` queue driver.
+
+`docs/` remains the design authority for everything unbuilt. Never assume a class, table, endpoint,
+or component named in the docs exists; check the filesystem first.
+
+## Specification
+
+`docs/` is the source of truth and outranks inference from surrounding code. Read the rows that
+cover what you are about to touch **before** planning or writing.
+
+| Read | When |
+| --- | --- |
+| `docs/01-SRS.md` | Deciding what a feature must do. Holds every `FR-*` requirement id, its MoSCoW priority, and its acceptance criteria — cite the id in commits, tests, and rule notes. |
+| `docs/02-BACKEND-ARCHITECTURE.md` | Touching schema, routes, policies, jobs, or caching. §3 is the column-level schema and the reward state diagram; §5 is the authorization matrix; §10 is the real-time/broadcast layer. |
+| `docs/03-FRONTEND-ARCHITECTURE.md` | Touching the SPA. §2 is the Resource ↔ TS type contract; §4 is the focus-timer design; §4.1 is Web Push; §4.2 is Echo/Pusher. |
+| `docs/04-BACKEND-STEPS.md` / `docs/05-FRONTEND-STEPS.md` | Choosing what to build next. Four phases, each shippable alone, backend and frontend sequenced phase-for-phase. |
+| `docs/06-TESTING-STRATEGY.md` | Writing tests, or deciding whether a phase is done. Holds the per-area test matrix and the phase gates. |
+
+## Product invariants
+
+Cross-cutting truths the design turns on. Breaking one is a product bug even when the code is clean.
+
+- **A Sprint ends only when the user stops it.** The server row (`started_at` +
+  `planned_duration_seconds`) *is* the running sprint. Passing the planned duration produces a push
+  notification and a UI overtime state — never a status change, never an auto-stop, never an
+  auto-complete (FR-SPR-03, FR-SPR-09).
+- **A mentor sets expectations, never content.** Mentorship grants read access plus
+  `assigned_minutes` / `assigned_due_at`; only the mentee edits their own items or marks them done
+  (FR-MENT-04, FR-MENT-06).
+- **Mentorship is scoped to shared Groups.** There is no public user directory and no cross-group
+  mentor search (FR-MENT-01).
+- **A notification is durable first and live second.** Every member notification writes a
+  `notifications` row, then broadcasts. Pusher reaches an open tab, Web Push reaches a closed
+  browser, and neither is allowed to be the only place a notification existed — a broadcast failure
+  degrades the app to "not live," never to "lost" (FR-NOT-01, FR-NOT-03, FR-SPR-10).
+- **A broadcast channel is an authorization boundary.** Subscribing to another member's private
+  channel would leak their notifications whatever the Policies say, so every channel in
+  `routes/channels.php` is private and mirrors the Policy it corresponds to (01 §5 Privacy).
+- **Timestamps are stored in UTC; day boundaries are resolved per member.** `app.timezone` must stay
+  `UTC` — the whole point of `users.timezone` is that two siblings in different countries get their
+  own midnight. A local `app.timezone` writes local time to the database and makes every conversion
+  a no-op for members in the server's zone and wrong for everyone else. New members default to
+  `pathforge.default_timezone`, which is a display preference and unrelated (FR-GAM-01, FR-AUTH-04).
+- **Denormalized numbers are rebuilt, never incremented.** `RecalculateGoalStatsJob` recomputes
+  `roadmap_items.time_spent_seconds` and every `goal_stats` column from the sprint rows, so a missed
+  or double-delivered job self-heals on the next run instead of corrupting the cache permanently
+  (02 §3, §6).
+- **Rewards are bookkeeping, never money.** Fulfilling a reward records that something happened
+  outside the app. No payment rails, no spendable balance (FR-RWD-05).
+- **Privacy is enforced in queries.** Every visibility rule lives in a Policy or a query scope, not
+  in a hidden UI control (01 §5 Privacy).
+
+## Working rules
+
+- Build in the phase order of `docs/04-BACKEND-STEPS.md`; a phase's gate in
+  `docs/06-TESTING-STRATEGY.md` must be green before the next phase starts.
+- A frontend phase never gets ahead of the backend endpoints it consumes.
+- Requirements are contested in `docs/`, not in code. When implementation reveals a doc is wrong,
+  say so and get the doc changed rather than quietly diverging from it.
+
+## Open decisions
+
+Unresolved in the docs. Raise these rather than picking silently.
+
+- **SPA root directory** — `docs/03` describes a standalone `src/`; the repo ships Laravel-default
+  `resources/js` with `laravel-vite-plugin`. Same-repo or separate app is undecided.
+- **Product name** — "Pathforge" is a placeholder; `.env` still carries `APP_NAME=Laravel`. Nothing
+  in `app/` is named after it, so a rename stays cheap — keep it that way.
+
+### Settled (do not re-litigate)
+
+- **File attachments** — hand-rolled `resource_files` per 02 §3. `spatie/laravel-medialibrary` is
+  out: it would not model the `link` and `note` resource types anyway, so the domain would end up
+  split across two stores.
+- **Squad Challenge storage** — dedicated `challenges` + `challenge_participants`, as 04 recommends.
+- **PHP version** — staying on 8.2 (local is 8.2.12). Write 8.2-compatible code; `docs/02` §1's
+  "8.3+" is aspirational, not a constraint met here.
+- **Real-time transport** — Pusher Channels, not self-hosted Reverb (02 §10.5). Both speak the same
+  protocol, so switching later is config, not code.
+
 <laravel-boost-guidelines>
 === foundation rules ===
 

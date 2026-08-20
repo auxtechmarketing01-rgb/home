@@ -29,6 +29,9 @@ Sequenced to match `04-BACKEND-STEPS.md` phase-for-phase — a frontend phase sh
 - [ ] `useFileUpload` composable + `ResourceUploader` (progress bar via axios `onUploadProgress`) + `ResourceList`, used both under a Goal and under a Roadmap Item.
 - [ ] Client-side file validation (extension/size) as a **UX nicety only** — the backend allow-list in `StoreResourceRequest` is the real gate; don't let the frontend check create a false sense of security.
 - [ ] `public/sw.js` (push + notificationclick handlers) and `usePushNotifications` composable, exactly as specified in `03-FRONTEND-ARCHITECTURE.md` §4.1.
+- [ ] `laravel-echo` + `pusher-js`; `src/echo.ts` and `useRealtimeNotifications`, per `03-FRONTEND-ARCHITECTURE.md` §4.2. Mount it **once** in `AppShell`, not per-route, or every navigation tears down and re-establishes the socket. Only `VITE_PUSHER_APP_KEY` and `VITE_PUSHER_APP_CLUSTER` belong here — anything `VITE_`-prefixed is compiled into the shipped bundle, so the app secret must never appear.
+- [ ] Point Echo's `authEndpoint` at `/api/v1/broadcasting/auth` with `withCredentials: true`. Echo's default (`/broadcasting/auth` on the `web` group) does not work for a separate-origin SPA using Sanctum cookie auth.
+- [ ] `types/notification.ts` (`AppNotification`) used for **both** fetched rows and live frames — resist adding a separate "event" type, that is how the two shapes start drifting.
 - [ ] `NotificationPermissionPrompt` in `AppShell` — must state the real delivery caveat (works reliably with browser running in background; delayed if fully quit; iOS needs home-screen install) rather than implying push always works instantly everywhere.
 - [ ] `vite-plugin-pwa` configured + `manifest.webmanifest` — required for iOS push to work at all, and generally improves "feels persistent" on desktop/Android too.
 - [ ] **Gate**: Vitest tests for `useFocusTimer` (deadline math, survives a simulated "advance system clock" scenario, and the overtime branch specifically — see testing doc) and `FocusTimerWidget` start/pause/resume interactions, before Phase 3.
@@ -41,7 +44,8 @@ Sequenced to match `04-BACKEND-STEPS.md` phase-for-phase — a frontend phase sh
 - [ ] `stores/analytics.ts` + `AnalyticsView`: `StatCard`, `HeatmapCalendar` (date-fns for day math), `VelocityChart` (chart.js/vue-chartjs), `ProjectionBanner` (renders the backend's `projected_completion_date`, and **explicitly handles `null`** — show "not enough data yet," don't hide the component or show a misleading date).
 - [ ] `LeaderboardTable` + `ComparisonChart` in `GroupDetailView`.
 - [ ] `ChallengeCard` for Squad Challenges (FR-GRP-04) — depends on backend `challenges` table from Phase 3 backend step.
-- [ ] `stores/notifications.ts` + a notification bell/dropdown in `Topbar`; poll or (better, if time allows) a lightweight SSE/WebSocket later — polling every 30–60s is an acceptable v1 approach, don't over-engineer this.
+- [ ] `stores/notifications.ts` + a notification bell/dropdown in `Topbar`, fed by `fetchAll()` on mount **and** by the Pusher subscription wired up in Phase 2. No polling: FR-NOT-03 makes live delivery the mechanism, and a poll layered on top of a working socket is just duplicate requests. `receiveLive` must be idempotent by notification `id`, because a refetch and a live frame for the same notification will race.
+- [ ] The bell must stay correct with the socket down — the store is populated by fetching, so a dead connection costs freshness, not data. Don't gate rendering on a connection; a subtle "reconnecting" affordance is the right weight, not an error state.
 - [ ] Gamification UI (XP bar, badges) — only rendered if `user.settings.gamification_enabled`, per the opt-in requirement; build the toggle in `SettingsView` first so it's testable from day one of this feature.
 - [ ] **Gate**: Vitest tests for `LeaderboardTable` sorting/rendering and `ProjectionBanner`'s null-state handling.
 
@@ -56,6 +60,7 @@ Sequenced to match `04-BACKEND-STEPS.md` phase-for-phase — a frontend phase sh
 - [ ] `RewardCard` — must render every status distinctly (`requested`/`offered`/`earned`/`claimed`/`fulfilled`/`denied`/`revoked`), not just a generic "reward" chip; the whole point of the state machine is that these mean different things and call for different actions.
 - [ ] `RewardOfferForm` (mentor) and `RewardRequestForm` (mentee, the literal "demand a reward" UI) — two different forms, not one form with a role toggle, since the fields and validation differ (an offer needs a linked goal/item up front; a request doesn't have to).
 - [ ] `RewardClaimButton` — only enabled when `status === 'earned'`; disabled state should say why ("not yet earned"), not just be greyed out with no explanation.
+- [ ] Reward and mentorship views react to live frames: a `RewardEarnedNotification` arriving over Pusher should move the card into the "earned" bucket without a refetch, which is what makes `RewardClaimButton` become enabled on its own. This is the flow `06-TESTING-STRATEGY.md` §3 gate 5 walks end to end.
 - [ ] `RewardLedgerTable` — read-only summary of fulfilled monetary rewards per mentee, per FR-RWD-06; explicitly labelled as a record, not a balance ("nothing here can be spent in the app").
 - [ ] **Gate**: Vitest tests for the `RewardCard` status-to-UI mapping (every status renders the correct available actions and no others) and the `AssignRoadmapItemForm` visibility rule (owner never sees it; a non-mentor never sees it; only an accepted mentor does).
 

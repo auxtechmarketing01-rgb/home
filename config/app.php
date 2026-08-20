@@ -56,16 +56,40 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Frontend URL
+    |--------------------------------------------------------------------------
+    |
+    | Where the standalone Vue SPA is served from. Used for CORS, and as the
+    | landing page after the API handles an emailed link such as email
+    | verification.
+    |
+    */
+
+    'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |
     | Here you may specify the default timezone for your application, which
-    | will be used by the PHP date and date-time functions. The timezone
-    | is set to "UTC" by default as it is suitable for most use cases.
+    | will be used by the PHP date and date-time functions.
+    |
+    | This MUST stay UTC. Every timestamp in this app is stored in UTC and
+    | converted to each member's own `users.timezone` when a day boundary is
+    | needed — that is what makes streaks correct for two siblings in
+    | different countries (FR-GAM-01, FR-AUTH-04). Setting a local zone here
+    | would write local time into the database, at which point converting a
+    | stored timestamp to a member's timezone is meaningless: it is a no-op
+    | for members in the server's zone and wrong for everyone else, and every
+    | historical row silently changes meaning if the server ever moves.
+    |
+    | The default zone shown to a *new member* is a separate concern — see
+    | `pathforge.default_timezone`.
     |
     */
 
-    'timezone' => 'Asia/Dhaka',
+    'timezone' => env('APP_TIMEZONE', 'UTC'),
 
     /*
     |--------------------------------------------------------------------------

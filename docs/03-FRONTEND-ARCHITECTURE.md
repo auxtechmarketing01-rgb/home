@@ -128,6 +128,20 @@ export interface RoadmapItem {
 New type files:
 
 ```typescript
+// src/types/notification.ts
+// One interface for both transports: this is exactly what
+// GET /notifications returns per row, and exactly what arrives over Pusher
+// (see §4.2). Never model the live frame as a separate shape.
+export interface AppNotification<TPayload = Record<string, unknown>> {
+  id: string                 // uuid
+  type: string               // short class name, e.g. 'RewardEarnedNotification'
+  payload: TPayload          // the notification's own fields
+  read_at: string | null     // always null on a freshly broadcast frame
+  created_at: string
+}
+```
+
+```typescript
 // src/types/mentorship.ts
 export type MentorshipStatus = 'pending' | 'accepted' | 'declined' | 'ended'
 
@@ -176,7 +190,7 @@ export interface Reward {
 | `sprints` | **the single active/running sprint** (if any) + history page | `start`, `pause`, `resume`, `complete`, `cancel`, `fetchHistory` |
 | `groups` | groups the user belongs to, members, leaderboard cache | `fetchAll`, `invite`, `join`, `fetchLeaderboard` |
 | `analytics` | per-goal stats, overview dashboard data | `fetchGoalStats`, `fetchOverview` |
-| `notifications` | unread count, list | `fetchAll`, `markRead` |
+| `notifications` | unread count, list | `fetchAll`, `markRead`, `receiveLive` (prepends a frame arriving over Pusher, §4.2 — must be idempotent by `id`, since a refetch and a live frame can race) |
 | `mentorships` | relationships where the user is mentor or mentee, split into two computed lists | `fetchAll`, `request`, `accept`, `decline`, `end` |
 | `rewards` | rewards where the user is mentor or mentee, filterable by status | `fetchAll`, `offer`, `request`, `respond`, `claim`, `fulfill`, `revoke` |
 
@@ -323,6 +337,82 @@ self.addEventListener('notificationclick', (event) => {
 })
 ```
 
+### 4.2 Getting notified when the app *is* open: `useRealtimeNotifications`
+
+§4.1 covers the closed-tab case. This covers the open-tab case, and the two are complements, not alternatives — Web Push cannot update a page (it can only raise an OS notification), and Pusher cannot reach a page that no longer exists. Implements FR-NOT-03; backend contract in `02-BACKEND-ARCHITECTURE.md` §10.
+
+Three rules that keep this from becoming a second, drifting source of truth:
+
+1. **A live frame is the same shape as a fetched row.** Both are `AppNotification` (§2). There is no separate "live event" type.
+2. **The socket is a latency optimisation, never the source of truth.** The store is still populated by `fetchAll()` on mount. A dropped connection costs freshness, not data.
+3. **`receiveLive` is idempotent by `id`.** A refetch and a live frame for the same notification will race; the store must not end up with two rows.
+
+```typescript
+// src/echo.ts — one Echo instance for the app, created after auth is known
+import Echo from 'laravel-echo'
+import Pusher from 'pusher-js'
+
+window.Pusher = Pusher
+
+export function createEcho() {
+  return new Echo({
+    broadcaster: 'pusher',
+    key: import.meta.env.VITE_PUSHER_APP_KEY,
+    cluster: import.meta.env.VITE_PUSHER_APP_CLUSTER,
+    forceTLS: true,
+    // The SPA is a separate origin, so channel authorization goes through
+    // the versioned API with the Sanctum session cookie attached — not
+    // through Echo's default /broadcasting/auth on the web group.
+    authEndpoint: `${import.meta.env.VITE_API_BASE_URL}/broadcasting/auth`,
+    withCredentials: true,
+  })
+}
+```
+
+```typescript
+// src/composables/useRealtimeNotifications.ts
+import { onMounted, onUnmounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+import { useNotificationsStore } from '@/stores/notifications'
+import type { AppNotification } from '@/types/notification'
+import { createEcho } from '@/echo'
+
+export function useRealtimeNotifications() {
+  const auth = useAuthStore()
+  const notifications = useNotificationsStore()
+  let echo: ReturnType<typeof createEcho> | null = null
+
+  onMounted(() => {
+    if (!auth.user) return
+
+    echo = createEcho()
+
+    // Laravel's own broadcast notification channel targets
+    // `App.Models.User.{id}`; Echo's `.notification()` binds to the
+    // framework's BroadcastNotificationCreated event for us.
+    echo.private(`App.Models.User.${auth.user.id}`)
+      .notification((frame: AppNotification) => {
+        notifications.receiveLive(frame)
+      })
+  })
+
+  onUnmounted(() => {
+    echo?.disconnect()
+    echo = null
+  })
+
+  return {}
+}
+```
+
+Mount this once in `AppShell`, next to `NotificationPermissionPrompt` — subscribing per-route would tear down and re-establish the socket on every navigation.
+
+**Only the Pusher *key* and *cluster* belong in the SPA.** They are public by design; the app secret is a server credential and must never appear in a `VITE_`-prefixed variable, because everything with that prefix is compiled into the shipped bundle.
+
+**Degradation is a UI concern, not just a network one.** If the socket never connects, the app must stay fully usable on fetched data — do not gate rendering on a connection, and do not show a scary error for a member who simply has a flaky network. A subtle "reconnecting" affordance in `Topbar` is the right weight.
+
+---
+
 **Be honest with the user about what this can and can't guarantee** (`NotificationPermissionPrompt` in layout should say this plainly, not just ask for permission): it reaches them with the tab and window both closed, as long as their browser is still running in the background — true by default on desktop Chrome/Firefox/Edge, and reliable on Android regardless of browser state via the OS. If the browser itself has been fully quit, the notification is queued and arrives once it's reopened — delayed, not lost. On iOS, this only works at all if the app has been installed to the home screen (iOS 16.4+); a plain Safari tab cannot receive push. This is a platform limitation, not something more client code can work around — see `01-SRS.md`'s NFR on push delivery for the full caveat.
 
 ---
@@ -419,4 +509,5 @@ Status colors are centralized here so `RoadmapItemNode`, `RoadmapKanbanView` col
 | `vuedraggable` (Vue 3 SortableJS wrapper) | Drag-and-drop roadmap reordering (FR-RM-05) is core UX; hand-rolling pointer-based drag physics/auto-scroll is not worth it versus a mature, small wrapper. |
 | `chart.js` + `vue-chartjs` | Velocity charts, heatmap-style calendars, and leaderboard bar comparisons (FR-ANL-01/03/04) — lightweight and well-documented for exactly these chart types; avoids a heavier charting framework for what's a fairly standard set of visualizations. |
 | `date-fns` | Roadmap day-scheduling and streak/heatmap date math need reliable, tree-shakeable date arithmetic; lighter than Moment and avoids re-implementing timezone-aware day-boundary logic by hand on the frontend (the server remains authoritative for streak *computation*, but the UI still needs local date formatting). |
+| `laravel-echo` + `pusher-js` | The client half of FR-NOT-03 (§4.2). `laravel-echo` is what knows how to bind to Laravel's `BroadcastNotificationCreated` event and how to authorize a private channel; `pusher-js` is the transport it drives. Hand-rolling a WebSocket client against the Pusher protocol would mean reimplementing channel auth, reconnection and backoff for no gain. |
 | `vite-plugin-pwa` | Generates the web app manifest and handles service-worker registration/updates for "Add to Home Screen" installability (§6.1 in `01-SRS.md`) — on iOS this isn't optional flourish, it's the *only* way push notifications work at all, so treat this as bundled with the push-notification feature rather than a separate nice-to-have. Keep the custom `push`/`notificationclick` handlers in `public/sw.js` (§4.1) — this plugin manages caching/installability, not the push logic itself. |

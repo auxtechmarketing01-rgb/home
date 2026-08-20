@@ -7,7 +7,9 @@ Companion to `01-SRS.md`. This defines the concrete implementation shape: schema
 ## 1. Stack & API style
 
 - **Laravel 12**, PHP 8.3+, MySQL 8.
+- **`app.timezone` must stay `UTC`.** Every timestamp is stored in UTC and converted to the member's own `users.timezone` wherever a day boundary matters (streaks, history filters, projections). Setting a local zone here writes local time into the database, at which point converting a stored timestamp to a member's timezone is a no-op for members in the server's zone and wrong for everyone else — and every historical row silently changes meaning if the server ever moves. The default zone offered to a *new* member is a separate setting (`pathforge.default_timezone`).
 - **Pure REST API** (not Inertia) — confirmed choice, since the frontend is a standalone Vue 3 SPA per your stack, not a Blade-hybrid app. This means: no session-shared page props, every boundary is a versioned JSON contract, and the Vue app owns all routing/state. Tradeoff: more boilerplate (Resources + TS types on both sides) vs. Inertia's "just pass props," but it buys a clean separation if you ever want a separate mobile client later.
+- **Real-time: Laravel broadcasting over Pusher Channels**, one private channel per member. Live delivery is an additional channel on Laravel's existing notification system, not a parallel mechanism — see §10.
 - **Auth: Laravel Sanctum, SPA cookie-based** (not personal access tokens). Justification: single first-party frontend served from a trusted domain → CSRF-protected cookie auth is simpler and more secure than juggling bearer tokens in JS storage. **Tradeoff flagged**: if a native mobile app is added later, that client will need token-based auth instead (Sanctum supports both), so keep the `AuthController` logic separable from "how the session is established."
 
 ---
@@ -88,6 +90,7 @@ app/
     SendSprintReminderJob.php
     SendRewardClaimReminderJob.php # NEW — nudges a mentor about an unfulfilled claimed reward
   Notifications/
+    MemberNotification.php           # abstract base — declares the channel set, see §10
     GroupInviteNotification.php
     StreakAtRiskNotification.php
     ChallengeUpdateNotification.php
@@ -99,6 +102,13 @@ app/
     RewardClaimedNotification.php
     RewardFulfilledNotification.php
     SprintCompleteNotification.php   # push channel — see §6
+```
+
+```
+routes/
+  api.php          # /api/v1 — every HTTP endpoint
+  channels.php     # broadcast channel authorization — see §10
+  console.php      # the schedule (§6)
 ```
 
 > **Naming note**: the domain model "Resource" (an attached file/link/note) collides with Laravel's `Http\Resources` concept. We name the Eloquent model `ResourceFile` to avoid confusion — flag this in code review if anyone reintroduces `Resource.php`.
@@ -201,7 +211,8 @@ Index: `(roadmap_id, position)`.
 | break_seconds | unsignedInteger, default 0 | |
 | started_at | timestamp | |
 | ended_at | timestamp, nullable | |
-| paused_seconds_total | unsignedInteger, default 0 | |
+| paused_at | timestamp, nullable | when the *current* pause began, cleared on resume/complete. **Added during Phase 2**: FR-SPR-04 cannot be implemented without it — excluding paused time from `actual_duration_seconds` requires knowing when the open pause started, and deriving that from `updated_at` breaks the moment any other column on the row is written |
+| paused_seconds_total | unsignedInteger, default 0 | closed pauses only; the open one is folded in on resume or completion |
 | actual_duration_seconds | unsignedInteger, nullable | set on completion |
 | status | enum(`running`,`paused`,`completed`,`cancelled`), default `running` | |
 | notes | text, nullable | |
@@ -217,8 +228,8 @@ Constraint (app-level, enforced in `StartSprintAction`, FR-SPR-08): a user may h
 | goal_id | FK, unique | |
 | total_focus_seconds | unsignedInteger | |
 | sessions_count | unsignedInteger | |
-| completion_percentage | decimal(5,2) | |
-| current_streak, longest_streak | unsignedInteger | |
+| completion_percentage | decimal(5,2) | `done / (total − skipped) × 100`, rounded to 2dp; 0 when the roadmap is empty. **Skipped items leave the denominator rather than counting as unfinished** — counting them would cap any roadmap containing a skipped item below 100% forever, so the FR-GOAL-04 completion banner could never appear for it. Nested items each count once and on their own, since FR-RM-03 makes a parent's status informational rather than derived |
+| current_streak, longest_streak | unsignedInteger | **per goal**, in the owner's timezone. The per-*user* streak that FR-GAM-01 and the leaderboard need is a separate concern and arrives in Phase 3 alongside `DailyStreakCheckJob`; §2's `Streak.php` model belongs to that phase, not this one |
 | projected_completion_date | date, nullable | via `ProjectionService` |
 | last_recalculated_at | timestamp | |
 
@@ -298,7 +309,8 @@ Prefer the migration shipped by `laravel-notification-channels/webpush` (see §9
 | DELETE | `/resources/{resource}` | ResourceController@destroy | `delete` |
 | POST | `/sprints/start` | SprintController@start | `create` |
 | POST | `/sprints/{sprint}/pause` \| `/resume` \| `/complete` \| `/cancel` | SprintController@* | `update` (owner only) |
-| GET | `/sprints` | SprintController@index | scoped to `auth()->id()` |
+| GET | `/sprints` | SprintController@index | scoped to `auth()->id()` — filters: `from`/`to` (resolved in the member's own timezone), `goal_id`, `roadmap_item_id`, `status` |
+| GET | `/sprints/active` | SprintController@active | scoped to `auth()->id()` — the single running-or-paused sprint, or `data: null`. This is what the SPA calls on bootstrap to recover a session started before the browser was closed (FR-SPR-03); "nothing running" is a normal state, so it is `null` rather than a 404 |
 | GET | `/sprints/export` | SprintController@export | scoped to `auth()->id()` — CSV, FR-SPR-06 |
 | GET/POST | `/groups` | GroupController@index/store | — |
 | GET | `/groups/{group}` | GroupController@show | `view` (member only) |
@@ -318,6 +330,7 @@ Prefer the migration shipped by `laravel-notification-channels/webpush` (see §9
 | POST | `/rewards/{reward}/revoke` | RewardController@revoke | mentor only, requires `offered` status (not yet earned) |
 | POST | `/push-subscriptions` | PushSubscriptionController@store | authenticated — stores the browser's push subscription for the current user |
 | DELETE | `/push-subscriptions` | PushSubscriptionController@destroy | authenticated — called when the user disables notifications client-side |
+| GET/POST | `/broadcasting/auth` | *(framework)* `Illuminate\Broadcasting\BroadcastController@authenticate` | authenticated — private-channel authorization for Pusher, see §10. Mounted inside this versioned, stateful API group rather than on the framework's default `web` group, so the separate-origin SPA can reach it with the same session cookie and CORS rules as every other call |
 
 **Controllers stay thin**: every controller method is `validate → call an Action/Service → return a Resource`. No query building, no business logic in the controller body — that's what `app/Actions` and `app/Services` are for, per your stated default.
 
@@ -348,6 +361,8 @@ Prefer the migration shipped by `laravel-notification-channels/webpush` (see §9
 | `SendSprintReminderJob` | Scheduled, opt-in | Notify user if no sprint started by a configured time |
 | `SendRewardClaimReminderJob` | Scheduled daily | Nudges a mentor about a `claimed` reward that's been sitting unfulfilled for more than a few days (default 3, configurable) — directly targets the most common real-world failure mode found in the chore/reward app research (§2 of `01-SRS.md`): the parent forgetting to actually deliver |
 
+Every notification these jobs send extends `MemberNotification` and is therefore `ShouldQueue`, which means the Pusher round-trip also happens on the queue (§10). A job that dispatches a notification must not treat a broadcast failure as a job failure — the durable row is already written by then.
+
 Why queued, not synchronous: stats recalculation touches multiple tables and must never block the HTTP response the user is waiting on after finishing a sprint (NFR: performance). This is also why `goal_stats` exists as a separate cache table instead of computing aggregates with `withSum`/`withCount` on every request — those queries are fine for one goal, expensive for a leaderboard across a whole group.
 
 ---
@@ -373,6 +388,60 @@ Why queued, not synchronous: stats recalculation touches multiple tables and mus
 | `spatie/laravel-medialibrary` | Polymorphic file attachment (Goal/RoadmapItem) with disk abstraction and automatic conversions (e.g., thumbnailing images) — reinventing this by hand for `resource_files` is a lot of edge-case handling for something this package already solves well. **Alternative**: hand-rolled `resource_files` table as scoped above, if you'd rather avoid the dependency — both are viable, pick one before Phase 2. |
 | `league/csv` | Clean, well-tested CSV writer for the Sprint history export (FR-SPR-06) — avoids hand-building CSV escaping. |
 | `spatie/laravel-activitylog` *(optional)* | Could replace the hand-rolled `activity_logs` table if you want built-in diff/causer tracking; the hand-rolled version above is simpler and sufficient for v1's needs, so treat this as a "nice to have, not needed."|
+| `pusher/pusher-php-server` | Server SDK behind Laravel's `pusher` broadcast driver, which is what delivers FR-NOT-03. Required — the driver is a thin wrapper and does not work without it. See §10 for why a hosted service is preferred over self-hosting Reverb at this scale. |
 | `laravel-notification-channels/webpush` | Adds a `WebPushChannel` to Laravel's existing notification system and ships the `push_subscriptions` migration — this is the standard, well-maintained wrapper around `minishlink/web-push` for PHP; hand-rolling VAPID signing and the Web Push protocol's payload encryption yourself is a lot of cryptography to get subtly wrong for no benefit over an existing library. Requires generating a VAPID key pair (`php artisan webpush:vapid`) and, in production, a real HTTPS certificate — push subscriptions silently fail to register over plain HTTP outside of `localhost`. |
 
 No package is suggested for the Actions pattern (e.g. `lorisleiva/laravel-actions`) — plain invokable classes under `app/Actions` give you the same organizational benefit without a dependency, and that's already your stated default.
+
+---
+
+## 10. Real-time delivery (Pusher Channels)
+
+Implements FR-NOT-03. **Broadcasting is a third channel on Laravel's existing notification system, not a second notification system.** There is one payload, defined once, and three ways it can reach a member.
+
+### 10.1 The three channels, and why none of them is redundant
+
+| Channel | Reaches | Cannot reach |
+|---|---|---|
+| `database` | Everyone, eventually. The durable record behind FR-NOT-01. | Nobody in real time. |
+| `broadcast` (Pusher) | An open tab, focused or backgrounded, instantly. | A page that no longer exists. |
+| `webpush` (VAPID) | A member whose tab and window are both closed (FR-SPR-10). | Costs an OS-level interruption, so it is opted into per notification, never default. |
+
+`database` and `broadcast` are on **every** member notification. `webpush` is added only by notifications worth interrupting someone for — a sprint hitting its planned duration, a reward being claimed, a mentorship request.
+
+The ordering matters: the durable row is written first. Broadcasting is queued and best-effort, so a Pusher outage degrades the app to "not live," never to "notification lost."
+
+### 10.2 The base class
+
+`App\Notifications\MemberNotification` is abstract and owns the channel decision, so no individual notification can get it wrong:
+
+- `via()` returns `['database', 'broadcast']`, plus `WebPushChannel::class` when the subclass overrides `reachesClosedBrowser()` to return `true`.
+- `toArray()` is abstract and is the **single** source of the payload — the database row, the broadcast frame, and the SPA's `Notification` type all read the same shape, so a live frame and a later reload of the notification centre can never disagree.
+- `broadcastType()` returns `class_basename($this)`, so the wire format carries `RewardEarnedNotification`, not a PHP FQCN. Without this the SPA would be coupled to backend namespaces.
+- `toBroadcast()` nests the payload under a `payload` key, alongside `read_at` and `created_at`. Two reasons, both learned the hard way:
+  1. Laravel merges `id` and `type` into the broadcast frame. A flat payload lets any notification's own field silently shadow one of them.
+  2. `data` is Laravel's API-resource wrapper key. A top-level `data` field makes `JsonResource` believe the body is already wrapped and silently drop the envelope — which is why `NotificationResource` exposes `payload` too, and the two shapes stay identical field-for-field.
+
+### 10.3 Channels and authorization
+
+Channel authorization is a privacy boundary in its own right, ranking alongside the Policies in §5: a member who can subscribe to another member's channel receives their notifications live no matter what any Policy says. Every channel is private and every callback returns a hard boolean.
+
+| Channel | Authorized when | Added in |
+|---|---|---|
+| `App.Models.User.{id}` | `$user->id === (int) $id`. This is the channel Laravel's own `broadcast` notification channel targets, so authorizing it is what makes the notification centre live. | Cross-cutting (Phase 1) |
+| `groups.{group}` | Acting user is a member — mirrors `GroupPolicy::view`. Carries leaderboard and Squad Challenge updates. | Phase 3 |
+| `mentorships.{mentorship}` | Acting user is either party on an `accepted` row — mirrors `MentorshipPolicy::view`. Carries reward state-machine transitions. | Phase 4 |
+
+A channel is added when something actually broadcasts on it, not in advance.
+
+> **Trap worth knowing**: `Broadcast::channel()` registers against the *current broadcaster instance*, not against config. Swapping `broadcasting.default` after the app has booted leaves the new instance with **no channels at all**, and a broadcaster with no channels rejects everything — which looks exactly like a broken authorization rule. Any test that switches the driver has to re-require `routes/channels.php`.
+
+### 10.4 Configuration
+
+- `BROADCAST_CONNECTION=pusher`; `PUSHER_APP_ID`, `PUSHER_APP_KEY`, `PUSHER_APP_SECRET`, `PUSHER_APP_CLUSTER` in `.env` only — the secret is a server credential and never appears in `.env.example`, in this repo, or in any `VITE_`-prefixed variable. Only the **key** and **cluster** are public and reach the SPA.
+- The test suite runs on `BROADCAST_CONNECTION=null` so no test reaches the network.
+- Broadcasting rides the same queue as everything else (Horizon/Redis in deploy), because notifications are `ShouldQueue`.
+
+### 10.5 Why hosted Pusher rather than self-hosted Reverb
+
+Reverb would remove the third-party dependency but means running and monitoring a second long-lived process on a single small VPS for a closed group of a few members. That trade is not worth it at this scale. The escape hatch is cheap and deliberate: Reverb speaks the Pusher protocol, so moving is a `.env` change on the server plus an Echo config change in the SPA — no application code, no schema, no channel changes.

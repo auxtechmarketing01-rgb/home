@@ -189,6 +189,17 @@ Modeled directly on the request → approve/deny pattern used by real chore/allo
 |---|---|---|---|
 | FR-NOT-01 | In-app notification center (Sprint reminders, streak-at-risk, group invites, challenge updates) | S | Backed by Laravel's built-in notifications table |
 | FR-NOT-02 | Daily "streak at risk" reminder if no activity by a configurable hour | C | Queued, timezone-aware |
+| FR-NOT-03 | A notification raised while the member has the app open appears **without a refetch or a poll** | M | Delivered over a WebSocket (Pusher Channels) on the member's own private channel, carrying the same payload the notification centre would have returned. The durable row is still written first, so nothing depends on a socket having been connected — see `02-BACKEND-ARCHITECTURE.md` §10 |
+
+**Why this is a Must and not a nicety.** Three of the flows this app exists for are two-person handoffs where the second person is waiting: a mentee marks a roadmap item done and a reward flips `offered` → `earned` (FR-RWD-02); a mentee claims a reward and the mentor has to act (FR-RWD-04); a mentor accepts a mentorship request (FR-MENT-02). In each case the state change is produced by *someone else's* action, so there is nothing on the waiting member's screen to trigger a refetch. A 30–60s poll makes those flows feel broken in exactly the moment the product is supposed to feel responsive, and it is also the mechanism `06-TESTING-STRATEGY.md` §3 gate 5 relies on when it asks to confirm a reward shows as `earned` "without either user refreshing anything that would mask a missed real-time update."
+
+**Real-time is not a substitute for either of the other two channels**, and conflating them is the mistake to avoid here:
+
+| Member's situation | Reached by |
+|---|---|
+| App open in a focused or background tab | Pusher (FR-NOT-03) — instant |
+| Tab and window closed, browser process alive | Web Push (FR-SPR-10) — Pusher cannot reach a page that no longer exists |
+| Never saw either — offline, logged out, new device | The `notifications` table (FR-NOT-01) — the only durable record |
 
 ### 4.12 Admin
 | ID | Requirement | Pri | Acceptance Criteria |
@@ -209,6 +220,7 @@ Modeled directly on the request → approve/deny pattern used by real chore/allo
 | **Accessibility** | WCAG AA color contrast; timer and roadmap builder fully keyboard-operable; status changes announced via `aria-live` for screen readers |
 | **Portability** | Standard Laravel + MySQL + Vue stack, deployable to any VPS or PaaS; file storage abstracted via Laravel's filesystem so local vs. S3 is a config change |
 | **Observability** | Horizon dashboard for queue health; structured logging on Sprint lifecycle and stats-recalculation failures |
+| **Real-time delivery (FR-NOT-03)** | Live in-app delivery uses **Pusher Channels** (hosted), one private channel per member, authorized server-side against the acting user — a member must never be able to subscribe to another member's channel, which would leak their notifications regardless of what any Policy says. Broadcasting is queued and best-effort: a failed or unsubscribed socket delivery must never fail the request that triggered it, and must never be the only place a notification existed. If the WebSocket is down, the app degrades to "the notification is there on next load," not to "the notification was lost." |
 | **Push notification delivery (honest caveat, not a guarantee)** | Web Push reaches the user even with the tab and window fully closed, **as long as the browser process itself is still running in the background** (true on Chrome/Firefox/Edge desktop by default, and reliable on Android via the OS regardless of browser state). If the browser process itself has been fully quit, the push is queued by the push service and delivered the next time the browser opens — it is not lost, but it is late. iOS only supports this at all if the app is installed to the home screen (iOS 16.4+); plain Safari-tab web push on iOS does not work. State this plainly in the UI's notification permission prompt rather than implying it always works instantly everywhere. |
 | **Financial integrity of the Reward system** | The app is a bookkeeping/IOU layer, not a payments product — it never moves real money and never claims to. This is a scope boundary, not a missing feature: adding real payment rails would mean handling financial credentials and transfers, which is a materially different (and heavily regulated) product. |
 
@@ -277,3 +289,4 @@ Beyond what was explicitly asked for, here's a deliberate pass at "what else wou
 - **Mentorship is scoped to shared Groups**, not open to any user by ID/email search — "any user can choose other user as mentors" is implemented as "any user I share a Group with," since there's no public directory and this app may include minors (see FR-MENT-01).
 - **Rewards never move real money inside the app** — a mentor marking a reward "fulfilled" is a record of something that happened elsewhere (cash handed over, a bank transfer the family made on their own), not a transaction this app executes.
 - **Web Push requires HTTPS in production** (a hard browser requirement, not a preference) — `localhost` is exempt for local development, but staging/production deployment needs a real TLS certificate before push notifications will work at all.
+- **Real-time delivery depends on a hosted third party (Pusher Channels).** This is accepted deliberately for a closed-group app of this size: the alternative, self-hosting a WebSocket server (Laravel Reverb), means running and monitoring a second long-lived process on a single small VPS for a handful of users. The cost of the dependency is that live delivery stops working if the account's message quota is exhausted or the service is down. That is survivable precisely because the `notifications` table is the durable record and broadcasting is queued — the app degrades to non-live, never to lossy. Swapping to Reverb later is a config change plus a Vue Echo config change, not a redesign, because both speak the same Pusher protocol.

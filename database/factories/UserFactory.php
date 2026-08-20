@@ -30,6 +30,8 @@ class UserFactory extends Factory
             'email_verified_at' => now(),
             'password' => static::$password ??= Hash::make('password'),
             'remember_token' => Str::random(10),
+            'timezone' => 'UTC',
+            'settings' => null,
         ];
     }
 
@@ -40,6 +42,27 @@ class UserFactory extends Factory
     {
         return $this->state(fn (array $attributes) => [
             'email_verified_at' => null,
+        ]);
+    }
+
+    /**
+     * Pin the user to a specific IANA timezone — used by the streak
+     * day-boundary tests (06 §1.3).
+     */
+    public function inTimezone(string $timezone): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'timezone' => $timezone,
+        ]);
+    }
+
+    /**
+     * FR-GAM-02: gamification is toggleable off per user.
+     */
+    public function withoutGamification(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'settings' => ['gamification_enabled' => false],
         ]);
     }
 }
