@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0f1417" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <!-- iOS ignores SVG here; add a 180x180 PNG at this path to enable home-screen install. -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -15,7 +16,83 @@
     <title>Pathforge</title>
   </head>
   <body>
-    <div id="app"></div>
+    <!--
+      A first-paint shell, replaced the moment Vue mounts. It exists so a failure
+      to boot is never a silent white page: if the bundle throws or never
+      arrives, this stays on screen and says so.
+    -->
+    <div id="app">
+      <div id="boot" role="status" aria-live="polite">
+        <div class="boot-mark" aria-hidden="true"></div>
+        <p class="boot-title">Pathforge</p>
+        <p class="boot-hint">Starting up…</p>
+        <noscript>
+          <p class="boot-hint">This app needs JavaScript enabled.</p>
+        </noscript>
+      </div>
+    </div>
+
+    <style>
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        background: #0e1315;
+        color: #93a5aa;
+        font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+      }
+      .boot-mark {
+        width: 34px;
+        height: 34px;
+        margin-bottom: 0.35rem;
+        border-radius: 10px;
+        border: 2px solid rgb(45 212 191 / 0.35);
+        border-top-color: #2dd4bf;
+        animation: boot-spin 0.9s linear infinite;
+      }
+      .boot-title {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: #e6eef0;
+      }
+      .boot-hint {
+        margin: 0;
+        font-size: 12.5px;
+      }
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-color-scheme: light) {
+        :root:not(.dark) #boot {
+          background: #f5f8f8;
+          color: #4a5c61;
+        }
+        :root:not(.dark) .boot-title {
+          color: #0e1a1d;
+        }
+      }
+    </style>
+
     <script type="module" src="/src/main.ts"></script>
+    <script>
+      /* If the module never boots, say so instead of showing an empty page. */
+      window.setTimeout(function () {
+        var boot = document.getElementById('boot')
+        if (boot) {
+          var hint = boot.querySelector('.boot-hint')
+          if (hint) {
+            hint.textContent = 'Still loading — check the browser console for errors.'
+          }
+        }
+      }, 12000)
+    </script>
   </body>
 </html>

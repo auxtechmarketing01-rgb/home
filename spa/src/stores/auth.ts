@@ -10,6 +10,14 @@ export const useAuthStore = defineStore('auth', () => {
   const loading = ref(false)
   const failure = ref<ApiFailure | null>(null)
   const bootstrapped = ref(false)
+  /** False once the session probe fails for a transport reason rather than a 401. */
+  const backendReachable = ref(true)
+
+  /**
+   * Resolves when the session probe has settled either way. Held here so router
+   * guards can await it without the app deferring its first paint on it.
+   */
+  let readyPromise: Promise<void> | null = null
 
   const isAuthenticated = computed(() => user.value !== null)
   const needsVerification = computed(
@@ -18,21 +26,38 @@ export const useAuthStore = defineStore('auth', () => {
   const gamificationEnabled = computed(() => user.value?.gamification_enabled ?? false)
 
   /**
-   * Resolved once, before the router mounts. A 401 here is the expected answer
-   * for a visitor, not a failure -- so it clears the user and stays silent.
+   * Probes the session once. A 401 is the expected answer for a visitor, not a
+   * failure, so it clears the user and stays silent.
+   *
+   * Deliberately bounded by its own short timeout: this runs on every cold load,
+   * and an unreachable API must land on the login screen quickly rather than
+   * leave the app waiting. `backendReachable` records which of the two happened,
+   * so the UI can say "cannot reach the server" instead of "signed out".
    */
-  async function bootstrap(): Promise<void> {
-    if (bootstrapped.value) {
-      return
+  function bootstrap(): Promise<void> {
+    if (!readyPromise) {
+      readyPromise = authApi
+        .me({ timeout: 8000 })
+        .then((resolved) => {
+          user.value = resolved
+          backendReachable.value = true
+        })
+        .catch((error: unknown) => {
+          user.value = null
+          /** A null status means the request never got an answer at all. */
+          backendReachable.value = toApiFailure(error).status !== null
+        })
+        .finally(() => {
+          bootstrapped.value = true
+        })
     }
 
-    try {
-      user.value = await authApi.me()
-    } catch {
-      user.value = null
-    } finally {
-      bootstrapped.value = true
-    }
+    return readyPromise
+  }
+
+  /** Awaited by the router guards; safe to call before or after bootstrap starts. */
+  function ready(): Promise<void> {
+    return bootstrap()
   }
 
   async function login(payload: LoginPayload): Promise<boolean> {
@@ -41,6 +66,8 @@ export const useAuthStore = defineStore('auth', () => {
 
     try {
       user.value = await authApi.login(payload)
+      backendReachable.value = true
+      readyPromise = Promise.resolve()
 
       return true
     } catch (error) {
@@ -58,6 +85,8 @@ export const useAuthStore = defineStore('auth', () => {
 
     try {
       user.value = await authApi.register(payload)
+      backendReachable.value = true
+      readyPromise = Promise.resolve()
 
       return true
     } catch (error) {
@@ -108,6 +137,9 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
     failure.value = null
     resetCsrfCookie()
+    /** Settled and signed out -- a later sign-in replaces this outright. */
+    readyPromise = Promise.resolve()
+    bootstrapped.value = true
   }
 
   /**
@@ -126,10 +158,12 @@ export const useAuthStore = defineStore('auth', () => {
     loading,
     failure,
     bootstrapped,
+    backendReachable,
     isAuthenticated,
     needsVerification,
     gamificationEnabled,
     bootstrap,
+    ready,
     login,
     register,
     logout,

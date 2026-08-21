@@ -1,3 +1,4 @@
+import type { AxiosRequestConfig } from 'axios'
 import { apiClient, ensureCsrfCookie, getResource, sendResource } from './client'
 import type { User, UserSettings } from '@/types/user'
 
@@ -39,8 +40,9 @@ export const authApi = {
     await apiClient.post('/logout')
   },
 
-  me(): Promise<User> {
-    return getResource<User>('/user')
+  /** `config` exists so the cold-load session probe can set its own timeout. */
+  me(config?: AxiosRequestConfig): Promise<User> {
+    return getResource<User>('/user', config)
   },
 
   /**

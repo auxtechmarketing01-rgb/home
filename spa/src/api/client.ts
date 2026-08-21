@@ -7,14 +7,26 @@ import type {
   ValidationErrorBody,
 } from '@/types/api'
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000'
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? `${BACKEND_URL}/api/v1`
+/**
+ * Blank by default, which means same-origin relative URLs. In development that
+ * is the Vite proxy (see vite.config.ts) -- one origin, so no CORS and no
+ * third-party cookie rules to satisfy. Set VITE_API_BASE_URL to an absolute URL
+ * to talk to a separately hosted API instead.
+ */
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || ''
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `${BACKEND_URL}/api/v1`
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   /** Sanctum cookie SPA auth: the session cookie is the credential, so it must ride along. */
   withCredentials: true,
   withXSRFToken: true,
+  /**
+   * No request may hang indefinitely. Without a ceiling, one stalled call leaves
+   * its view spinning forever with no error to show -- a timeout at least becomes
+   * a message the member can act on.
+   */
+  timeout: 20000,
   headers: {
     Accept: 'application/json',
     'X-Requested-With': 'XMLHttpRequest',

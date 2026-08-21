@@ -11,8 +11,15 @@ declare module 'vue-router' {
 }
 
 export function installGuards(router: Router): void {
-  router.beforeEach((to) => {
+  router.beforeEach(async (to) => {
     const auth = useAuthStore()
+
+    /**
+     * The app mounts without waiting for the session, so the guard is where the
+     * probe is awaited. Doing it here rather than before mount is what keeps a
+     * slow or unreachable API from showing a blank page.
+     */
+    await auth.ready()
 
     if (to.meta.requiresAuth && !auth.isAuthenticated) {
       /**
