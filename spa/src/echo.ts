@@ -1,6 +1,6 @@
 import Echo from 'laravel-echo'
 import Pusher from 'pusher-js'
-import { API_BASE_URL } from '@/api/client'
+import { apiClient } from '@/api/client'
 
 declare global {
   interface Window {
@@ -24,11 +24,34 @@ export function createEcho(): Echo<'pusher'> {
     cluster: import.meta.env.VITE_PUSHER_APP_CLUSTER,
     forceTLS: true,
     /**
-     * The SPA is a separate origin, so channel authorization goes through the
-     * versioned API with the Sanctum session cookie attached -- Echo's default
-     * `/broadcasting/auth` on the `web` group cannot see that cookie.
+     * Channel authorization is pushed through the app's own axios client rather
+     * than left to Echo's built-in `authEndpoint`.
+     *
+     * `authEndpoint` uses pusher-js's own XHR, which sends the session cookie but
+     * *not* the `X-XSRF-TOKEN` header -- so Laravel's CSRF middleware answered
+     * every private-channel subscription with a 419 and real-time silently
+     * degraded to nothing. Going through `apiClient` reuses the interceptor that
+     * already primes the CSRF cookie and mirrors the header onto every mutation,
+     * so the two can never drift apart again.
+     *
+     * `apiClient` is based at `/api/v1`, which is also where the route lives:
+     * Echo's default `/broadcasting/auth` sits on the `web` group and cannot see
+     * a Sanctum SPA session.
      */
-    authEndpoint: `${API_BASE_URL}/broadcasting/auth`,
+    authorizer: (channel) => ({
+      authorize: (
+        socketId: string,
+        callback: (error: Error | null, data: unknown) => void,
+      ): void => {
+        apiClient
+          .post('/broadcasting/auth', {
+            socket_id: socketId,
+            channel_name: channel.name,
+          })
+          .then((response) => callback(null, response.data))
+          .catch((error: Error) => callback(error, null))
+      },
+    }),
     withCredentials: true,
   })
 }

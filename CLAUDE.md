@@ -29,11 +29,29 @@ the closed-browser case.
 - Cross-cutting — Pusher broadcasting + the notification layer, rate limiting, structured job
   failure logging, `/api/v1` versioning.
 
-**There is no Vue SPA at all yet** — `docs/05-FRONTEND-STEPS.md` is entirely unbuilt, and that is
-the next body of work.
+**The SPA is built too: all four phases of `docs/05-FRONTEND-STEPS.md` live in `spa/`**, verified in a
+real browser against the running API — login through the form, all nine views rendering, and a focus
+sprint started and stopped end to end.
 
-78 API routes, 5 scheduled jobs, 442 Pest tests. Run the suite with `php artisan test --compact`
+78 API routes, 5 scheduled jobs, 484 Pest tests. Run the suite with `php artisan test --compact`
 and format with `vendor/bin/pint` before finalising any change.
+
+The SPA has its own toolchain, run from `spa/`: `npm run dev` (Vite on 5173), `npx vue-tsc --noEmit`,
+`npx vitest run` (85 tests), `npx vite build`. All three checks must be green before finalising.
+
+**Running it locally takes two servers, and the frontend is not the one on 8000.** `php artisan serve`
+serves JSON only and has no Blade views, so opening it in a browser correctly shows nothing — the app
+is `http://localhost:5173`, and Vite proxies `/api`, `/sanctum` and `/storage` to the API so the
+browser only ever sees one origin. `spa/.env`'s `VITE_DEV_API_PROXY` names the API port; change it
+there rather than in `vite.config.ts`.
+
+Three local failure modes have each cost an hour, and none of them look like application bugs.
+A port that completes the TCP handshake but never answers HTTP is usually a wedged `composer` or
+`php` process holding `vendor/`. MariaDB being down takes the whole API down rather than degrading
+it, because `SESSION_DRIVER` and `CACHE_STORE` are both `database`, so every request needs a query.
+And a stale dev server bound to `[::1]:5173` beats a healthy one on `[::]` because the address is
+more specific — `localhost` silently hits the zombie while `127.0.0.1` is fine, so check
+`netstat -ano | grep 5173` for two listeners before debugging anything else.
 
 Local environment differs from the docs in three ways worth knowing before you debug something:
 MariaDB 10.4 rather than MySQL 8 (avoid MySQL-8-only SQL), PHP 8.2 rather than 8.3+, and Redis is
@@ -103,13 +121,24 @@ Cross-cutting truths the design turns on. Breaking one is a product bug even whe
 
 Unresolved in the docs. Raise these rather than picking silently.
 
-- **SPA root directory** — `docs/03` describes a standalone `src/`; the repo ships Laravel-default
-  `resources/js` with `laravel-vite-plugin`. Same-repo or separate app is undecided.
 - **Product name** — "Pathforge" is a placeholder; `.env` still carries `APP_NAME=Laravel`. Nothing
   in `app/` is named after it, so a rename stays cheap — keep it that way.
+- **Production serving of `spa/dist`** — the dev story is settled (two servers, Vite proxy), but
+  nothing decides yet whether the built SPA is served by Laravel from `public/`, by a separate static
+  host, or from a CDN. That choice sets whether production is same-origin (and can keep using Sanctum
+  cookies as-is) or cross-origin (and needs CORS plus `SANCTUM_STATEFUL_DOMAINS` widened).
 
 ### Settled (do not re-litigate)
 
+- **SPA root directory** — a standalone app in `spa/`, per `docs/03` §1. The Laravel-default
+  `resources/js` + root `vite.config.js` are untouched and unused; `spa/` has its own `package.json`,
+  `vite.config.ts` and `.gitignore`. (`spa/.gitignore` is not optional: the root one anchors its Node
+  rules with a leading slash, so without it ~19.6k `node_modules` files get tracked.)
+- **Inertia instead of a REST API + SPA** — considered and declined 2026-08-21. Inertia controllers
+  return `Inertia::render()` props rather than API Resources, so adopting it means rewriting all 78
+  routes and most of the JSON feature tests; it also fights the two features this product is built
+  around, an installable PWA with Web Push and a long-lived client-side focus timer. The trade would
+  have been reasonable before Phase 1 and is not now.
 - **File attachments** — hand-rolled `resource_files` per 02 §3. `spatie/laravel-medialibrary` is
   out: it would not model the `link` and `note` resource types anyway, so the domain would end up
   split across two stores.

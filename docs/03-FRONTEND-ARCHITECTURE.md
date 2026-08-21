@@ -351,6 +351,7 @@ Three rules that keep this from becoming a second, drifting source of truth:
 // src/echo.ts — one Echo instance for the app, created after auth is known
 import Echo from 'laravel-echo'
 import Pusher from 'pusher-js'
+import { apiClient } from '@/api/client'
 
 window.Pusher = Pusher
 
@@ -360,14 +361,40 @@ export function createEcho() {
     key: import.meta.env.VITE_PUSHER_APP_KEY,
     cluster: import.meta.env.VITE_PUSHER_APP_CLUSTER,
     forceTLS: true,
-    // The SPA is a separate origin, so channel authorization goes through
-    // the versioned API with the Sanctum session cookie attached — not
-    // through Echo's default /broadcasting/auth on the web group.
-    authEndpoint: `${import.meta.env.VITE_API_BASE_URL}/broadcasting/auth`,
+    // Channel authorization goes through the app's own axios client rather
+    // than Echo's `authEndpoint`.
+    //
+    // `authEndpoint` issues the request from pusher-js's own XHR. That sends
+    // the session cookie but *not* the `X-XSRF-TOKEN` header, so Laravel's
+    // CSRF middleware answers every private-channel subscription with a 419
+    // and real-time degrades to silence with nothing in the UI to show it.
+    // Going through `apiClient` reuses the interceptor that already primes
+    // the CSRF cookie and mirrors the header onto every mutation.
+    //
+    // The route also has to be the versioned one: Echo's default
+    // /broadcasting/auth sits on the `web` group and cannot see a Sanctum
+    // SPA session. `apiClient` is already based at /api/v1.
+    authorizer: (channel) => ({
+      authorize: (socketId, callback) => {
+        apiClient
+          .post('/broadcasting/auth', {
+            socket_id: socketId,
+            channel_name: channel.name,
+          })
+          .then((response) => callback(null, response.data))
+          .catch((error) => callback(error, null))
+      },
+    }),
     withCredentials: true,
   })
 }
 ```
+
+> The `authorizer` above replaced an `authEndpoint` on 2026-08-21, after the 419
+> was observed in a browser against the running app. Both branches of the
+> callback must fire: pusher-js retries a subscription whose callback never
+> returns, so swallowing the error turns one failed authorization into a
+> reconnect loop.
 
 ```typescript
 // src/composables/useRealtimeNotifications.ts
