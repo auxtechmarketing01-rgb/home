@@ -22,7 +22,7 @@ class AnalyticsController extends Controller
      * RecalculateGoalStatsJob has run, which is reported as `data: null`
      * rather than a 404 — a goal with no logged time yet is normal.
      */
-    public function goalStats(Goal $goal): JsonResponse
+    public function goalStats(OverviewRequest $request, Goal $goal, AnalyticsService $analytics): JsonResponse
     {
         $this->authorize('view', $goal);
 
@@ -30,6 +30,35 @@ class AnalyticsController extends Controller
 
         return response()->json([
             'data' => $stats === null ? null : GoalStatsResource::make($stats)->resolve(),
+            /**
+             * FR-ANL-01's heatmap calendar. Scoped to this goal — the
+             * cross-goal trend on /analytics/overview would show a member's
+             * total activity on every goal's page.
+             */
+            'daily_trend' => $analytics->goalTrend(
+                $goal,
+                (int) ($request->validated()['trend_days'] ?? 84),
+            ),
+        ]);
+    }
+
+    /**
+     * FR-ANL-04's line-chart data: focus minutes per day per member, bounded
+     * by the same shared-goal rule as the leaderboard, so a private goal can
+     * no more appear here than there (01 §5 Privacy).
+     */
+    public function groupTrend(
+        OverviewRequest $request,
+        Group $group,
+        AnalyticsService $analytics
+    ): JsonResponse {
+        $this->authorize('view', $group);
+
+        return response()->json([
+            'data' => $analytics->groupTrend(
+                $group,
+                (int) ($request->validated()['trend_days'] ?? 28),
+            ),
         ]);
     }
 

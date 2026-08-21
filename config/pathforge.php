@@ -102,6 +102,20 @@ return [
         ],
 
         /*
+        | Avatars are a narrower case than attachments: images only, and much
+        | smaller. They go through the same extension + byte-sniff gates,
+        | just with a tighter list.
+        */
+        'avatar_max_size_kilobytes' => (int) env('PATHFORGE_AVATAR_MAX_KB', 4096),
+        'allowed_avatar_extensions' => ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+        'allowed_avatar_mime_types' => [
+            'image/jpeg',
+            'image/png',
+            'image/gif',
+            'image/webp',
+        ],
+
+        /*
         | A sniffed container type is accepted only when the declared
         | extension is one of the formats that genuinely *is* that container:
         | Office documents are zip archives (docx/pptx/xlsx) or OLE2 compound

@@ -2,9 +2,8 @@
 
 namespace App\Http\Requests;
 
-use finfo;
+use App\Http\Requests\Concerns\SniffsUploadedFileContent;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
@@ -26,6 +25,8 @@ use Illuminate\Validation\Validator;
  */
 class StoreResourceRequest extends FormRequest
 {
+    use SniffsUploadedFileContent;
+
     /**
      * The route runs `update` on the parent Goal or RoadmapItem.
      */
@@ -66,65 +67,12 @@ class StoreResourceRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator): void {
-            $this->assertContentMatchesAnAllowedType($validator);
+            $this->assertContentMatchesAnAllowedType(
+                $validator,
+                'file',
+                (array) config('pathforge.uploads.allowed_mime_types'),
+                (array) config('pathforge.uploads.container_mime_types'),
+            );
         });
-    }
-
-    /**
-     * The byte sniff. Reads the stored temporary file rather than trusting
-     * the client's `Content-Type` header or the filename.
-     */
-    protected function assertContentMatchesAnAllowedType(Validator $validator): void
-    {
-        $file = $this->file('file');
-
-        if (! $file instanceof UploadedFile || ! $file->isValid()) {
-            return;
-        }
-
-        $path = $file->getRealPath();
-
-        if ($path === false || ! is_readable($path)) {
-            return;
-        }
-
-        $detected = (new finfo(FILEINFO_MIME_TYPE))->file($path);
-
-        if ($detected === false || $detected === '') {
-            $validator->errors()->add('file', 'The file type could not be determined.');
-
-            return;
-        }
-
-        if ($this->isAllowedContentType($detected, $file)) {
-            return;
-        }
-
-        $validator->errors()->add(
-            'file',
-            "Files of type {$detected} are not allowed, whatever the file is named."
-        );
-    }
-
-    protected function isAllowedContentType(string $detected, UploadedFile $file): bool
-    {
-        $allowed = (array) config('pathforge.uploads.allowed_mime_types');
-
-        if (in_array($detected, $allowed, true)) {
-            return true;
-        }
-
-        /**
-         * Office formats are containers: `.docx`/`.pptx`/`.xlsx` really are
-         * zip archives and the legacy `.doc`/`.xls`/`.ppt` really are OLE2
-         * compound files, so many libmagic builds report the container type
-         * rather than the document type. Accepting a container type only
-         * when the declared extension is one of those formats keeps real
-         * documents working without opening the door to arbitrary archives.
-         */
-        $containers = (array) config('pathforge.uploads.container_mime_types');
-        $extension = strtolower($file->getClientOriginalExtension());
-
-        return in_array($extension, (array) ($containers[$detected] ?? []), true);
     }
 }

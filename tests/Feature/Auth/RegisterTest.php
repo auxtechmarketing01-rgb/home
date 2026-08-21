@@ -1,7 +1,7 @@
 <?php
 
 use App\Models\User;
-use Illuminate\Auth\Notifications\VerifyEmail;
+use App\Notifications\QueuedVerifyEmail;
 use Illuminate\Support\Facades\Notification;
 
 /**
@@ -30,7 +30,7 @@ it('registers a user and returns the profile', function () {
 
     $this->assertAuthenticatedAs($user);
 
-    Notification::assertSentTo($user, VerifyEmail::class);
+    Notification::assertSentTo($user, QueuedVerifyEmail::class);
 });
 
 it('rejects an invalid registration payload', function () {

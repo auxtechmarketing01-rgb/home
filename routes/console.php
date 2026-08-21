@@ -3,6 +3,7 @@
 use App\Jobs\CleanupStaleSprintsJob;
 use App\Jobs\DailyStreakCheckJob;
 use App\Jobs\NotifyExpiredSprintsJob;
+use App\Jobs\RecalculateActiveGoalStatsJob;
 use App\Jobs\SendRewardClaimReminderJob;
 use App\Jobs\SendSprintReminderJob;
 use Illuminate\Support\Facades\Schedule;
@@ -49,3 +50,10 @@ Schedule::job(new SendSprintReminderJob)->hourly()->withoutOverlapping();
  * research (01 §2): the mentor simply forgetting to deliver.
  */
 Schedule::job(new SendRewardClaimReminderJob)->dailyAt('09:00')->withoutOverlapping();
+
+/**
+ * FR-ANL-02's "recompute nightly". Every other trigger for the stats rollup is
+ * an event; the projected completion date and the streak also decay with time
+ * alone, and nothing else would ever notice.
+ */
+Schedule::job(new RecalculateActiveGoalStatsJob)->dailyAt('02:00')->withoutOverlapping();

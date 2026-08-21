@@ -3,7 +3,7 @@
 use App\Jobs\SendSprintReminderJob;
 use App\Models\Sprint;
 use App\Models\User;
-use App\Notifications\StreakAtRiskNotification;
+use App\Notifications\SprintReminderNotification;
 use Illuminate\Support\Facades\Notification;
 
 /**
@@ -40,7 +40,7 @@ it('nudges an opted in member at their own local hour', function () {
 
     app()->call([$this->job, 'handle']);
 
-    Notification::assertSentToTimes($user, StreakAtRiskNotification::class, 1);
+    Notification::assertSentToTimes($user, SprintReminderNotification::class, 1);
 });
 
 /**
@@ -62,7 +62,7 @@ it('respects the member own timezone rather than the server hour', function () {
     $this->travelTo('2026-03-10 03:00:00');
     app()->call([$this->job, 'handle']);
 
-    Notification::assertSentToTimes($dhaka, StreakAtRiskNotification::class, 1);
+    Notification::assertSentToTimes($dhaka, SprintReminderNotification::class, 1);
 });
 
 it('stays quiet once the member has already started a session today', function () {
@@ -95,7 +95,7 @@ it('still nudges when the last session was yesterday', function () {
 
     app()->call([$this->job, 'handle']);
 
-    Notification::assertSentToTimes($user, StreakAtRiskNotification::class, 1);
+    Notification::assertSentToTimes($user, SprintReminderNotification::class, 1);
 });
 
 it('never nudges a disabled account', function () {

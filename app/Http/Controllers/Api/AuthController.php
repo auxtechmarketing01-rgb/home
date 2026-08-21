@@ -54,6 +54,18 @@ class AuthController extends Controller
 
         $user = User::query()->where('email', $credentials['email'])->firstOrFail();
 
+        /**
+         * FR-ADM-01. Checked here as well as in the `active` middleware:
+         * without it, a disabled account gets a valid session and only
+         * discovers it is locked out on the *next* request. Correct
+         * credentials for a disabled account are not a login.
+         */
+        if ($user->isDisabled()) {
+            throw ValidationException::withMessages([
+                'email' => 'This account has been disabled.',
+            ]);
+        }
+
         $this->establishSession($request, $user, (bool) $request->boolean('remember'));
 
         return UserResource::make($user);

@@ -17,6 +17,7 @@ use App\Http\Requests\StoreRewardRequest;
 use App\Http\Resources\RewardResource;
 use App\Models\Mentorship;
 use App\Models\Reward;
+use App\Services\RewardLedgerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -151,40 +152,8 @@ class RewardController extends Controller
      * the app, and the SPA is expected to label it as a record (01 NFR
      * Financial integrity).
      */
-    public function ledger(Request $request): JsonResponse
+    public function ledger(Request $request, RewardLedgerService $ledger): JsonResponse
     {
-        $user = $request->user();
-
-        $rows = Reward::query()
-            ->fulfilledMonetary()
-            ->forUser($user)
-            ->with(['mentorship.mentor', 'mentorship.mentee'])
-            ->get()
-            ->groupBy('mentorship_id')
-            ->map(function ($rewards) {
-                $mentorship = $rewards->first()->mentorship;
-
-                return [
-                    'mentorship_id' => $mentorship->id,
-                    'mentor' => ['id' => $mentorship->mentor_id, 'name' => $mentorship->mentor?->name],
-                    'mentee' => ['id' => $mentorship->mentee_id, 'name' => $mentorship->mentee?->name],
-                    'fulfilled_count' => $rewards->count(),
-                    /**
-                     * Grouped by label rather than summed into one figure:
-                     * `currency_label` is free text, so adding "500 BDT" to
-                     * "20 USD" would produce a meaningless number.
-                     */
-                    'totals_by_label' => $rewards
-                        ->groupBy(fn (Reward $reward): string => (string) ($reward->currency_label ?? ''))
-                        ->map(fn ($group): string => (string) $group->sum(
-                            fn (Reward $reward): float => (float) $reward->monetary_amount
-                        ))
-                        ->all(),
-                ];
-            })
-            ->values()
-            ->all();
-
-        return response()->json(['data' => $rows]);
+        return response()->json(['data' => $ledger->forUser($request->user())]);
     }
 }

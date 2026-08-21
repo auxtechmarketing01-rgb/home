@@ -258,3 +258,57 @@ it('awards nothing to a member who opted out of gamification', function () {
     /** The streak itself is still tracked — it is not a gamification feature. */
     expect(Streak::query()->where('user_id', $user->id)->sole()->current_streak)->toBe(8);
 });
+
+/**
+ * FR-NOT-02 says "a configurable hour" and 02 §6 says "the **user's**
+ * configured reminder hour". An audit found only the app-wide value being
+ * read, which gave one global evening to a group that can span timezones and
+ * personalities alike.
+ */
+it('prefers the member own reminder hour over the app default', function () {
+    config(['pathforge.streaks.reminder_hour' => 20]);
+    $this->travelTo('2026-03-10 07:00:00');
+
+    $earlyRiser = User::factory()->create([
+        'timezone' => 'UTC',
+        'settings' => ['streak_reminder_hour' => 7],
+    ]);
+    $goal = Goal::factory()->for($earlyRiser)->create();
+    logDays($earlyRiser, $goal, [1]);
+
+    /** A member on the default hour must stay quiet at 07:00. */
+    $evening = User::factory()->create(['timezone' => 'UTC']);
+    logDays($evening, Goal::factory()->for($evening)->create(), [1]);
+
+    app()->call([$this->job, 'handle']);
+
+    Notification::assertSentToTimes($earlyRiser, StreakAtRiskNotification::class, 1);
+    Notification::assertNotSentTo($evening, StreakAtRiskNotification::class);
+});
+
+it('falls back to the app default when the member set no hour', function () {
+    config(['pathforge.streaks.reminder_hour' => 20]);
+    $this->travelTo('2026-03-10 20:30:00');
+
+    $user = User::factory()->create(['timezone' => 'UTC', 'settings' => null]);
+    logDays($user, Goal::factory()->for($user)->create(), [1]);
+
+    app()->call([$this->job, 'handle']);
+
+    Notification::assertSentToTimes($user, StreakAtRiskNotification::class, 1);
+});
+
+it('ignores an out of range reminder hour and uses the default', function () {
+    config(['pathforge.streaks.reminder_hour' => 20]);
+    $this->travelTo('2026-03-10 20:30:00');
+
+    $user = User::factory()->create([
+        'timezone' => 'UTC',
+        'settings' => ['streak_reminder_hour' => 99],
+    ]);
+    logDays($user, Goal::factory()->for($user)->create(), [1]);
+
+    app()->call([$this->job, 'handle']);
+
+    Notification::assertSentToTimes($user, StreakAtRiskNotification::class, 1);
+});

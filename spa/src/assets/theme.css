@@ -1,0 +1,309 @@
+@import 'tailwindcss';
+
+/*
+| Pathforge design tokens (03 §8).
+|
+| Two layers on purpose:
+|   1. `:root` / `.dark` hold the raw semantic values, so a theme swap is a
+|      class toggle and never a rebuild.
+|   2. `@theme` re-exports them as Tailwind utilities, so a component writes
+|      `bg-surface` / `text-status-done` and never an inline hex. Status colours
+|      in particular are consumed by RoadmapItemNode, RoadmapKanbanView and
+|      HeatmapCalendar alike -- one definition, no visual drift.
+*/
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+
+  --pf-canvas: #f5f8f8;
+  --pf-canvas-deep: #eaf0f0;
+  --pf-surface: #ffffff;
+  --pf-surface-2: #f1f5f5;
+  --pf-surface-3: #e6eded;
+  --pf-line: rgb(16 34 38 / 0.11);
+  --pf-line-strong: rgb(16 34 38 / 0.2);
+  --pf-ink: #0e1a1d;
+  --pf-ink-muted: #4a5c61;
+  --pf-ink-faint: #74868c;
+
+  --pf-brand: #0d9488;
+  --pf-brand-hover: #0f766e;
+  --pf-brand-soft: rgb(13 148 136 / 0.12);
+  --pf-brand-ink: #ffffff;
+
+  --pf-ember: #ea580c;
+  --pf-ember-hover: #c2410c;
+  --pf-ember-soft: rgb(234 88 12 / 0.12);
+  --pf-ember-ink: #ffffff;
+
+  --pf-ok: #16a34a;
+  --pf-warn: #b45309;
+  --pf-danger: #dc2626;
+  --pf-danger-soft: rgb(220 38 38 / 0.1);
+  --pf-info: #2563eb;
+  --pf-violet: #7c3aed;
+
+  --pf-status-todo: #64748b;
+  --pf-status-progress: #b45309;
+  --pf-status-done: #0f766e;
+  --pf-status-skipped: #94a3b8;
+
+  --pf-grain-opacity: 0;
+}
+
+.dark {
+  color-scheme: dark;
+
+  --pf-canvas: #0e1315;
+  --pf-canvas-deep: #090d0e;
+  --pf-surface: #151b1e;
+  --pf-surface-2: #1c2428;
+  --pf-surface-3: #253034;
+  --pf-line: rgb(255 255 255 / 0.08);
+  --pf-line-strong: rgb(255 255 255 / 0.16);
+  --pf-ink: #e6eef0;
+  --pf-ink-muted: #93a5aa;
+  --pf-ink-faint: #667a80;
+
+  --pf-brand: #2dd4bf;
+  --pf-brand-hover: #5eead4;
+  --pf-brand-soft: rgb(45 212 191 / 0.14);
+  --pf-brand-ink: #032b27;
+
+  --pf-ember: #fb923c;
+  --pf-ember-hover: #fdba74;
+  --pf-ember-soft: rgb(251 146 60 / 0.14);
+  --pf-ember-ink: #2b1206;
+
+  --pf-ok: #34d399;
+  --pf-warn: #fbbf24;
+  --pf-danger: #f87171;
+  --pf-danger-soft: rgb(248 113 113 / 0.14);
+  --pf-info: #60a5fa;
+  --pf-violet: #a78bfa;
+
+  --pf-status-todo: #8797a0;
+  --pf-status-progress: #fbbf24;
+  --pf-status-done: #34d399;
+  --pf-status-skipped: #64748b;
+
+  --pf-grain-opacity: 0.035;
+}
+
+@theme {
+  --color-canvas: var(--pf-canvas);
+  --color-canvas-deep: var(--pf-canvas-deep);
+  --color-surface: var(--pf-surface);
+  --color-surface-2: var(--pf-surface-2);
+  --color-surface-3: var(--pf-surface-3);
+  --color-line: var(--pf-line);
+  --color-line-strong: var(--pf-line-strong);
+  --color-ink: var(--pf-ink);
+  --color-ink-muted: var(--pf-ink-muted);
+  --color-ink-faint: var(--pf-ink-faint);
+
+  --color-brand: var(--pf-brand);
+  --color-brand-hover: var(--pf-brand-hover);
+  --color-brand-soft: var(--pf-brand-soft);
+  --color-brand-ink: var(--pf-brand-ink);
+
+  --color-ember: var(--pf-ember);
+  --color-ember-hover: var(--pf-ember-hover);
+  --color-ember-soft: var(--pf-ember-soft);
+  --color-ember-ink: var(--pf-ember-ink);
+
+  --color-ok: var(--pf-ok);
+  --color-warn: var(--pf-warn);
+  --color-danger: var(--pf-danger);
+  --color-danger-soft: var(--pf-danger-soft);
+  --color-info: var(--pf-info);
+  --color-violet: var(--pf-violet);
+
+  --color-status-todo: var(--pf-status-todo);
+  --color-status-progress: var(--pf-status-progress);
+  --color-status-done: var(--pf-status-done);
+  --color-status-skipped: var(--pf-status-skipped);
+
+  --font-display: 'Sora', 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  * {
+    border-color: var(--pf-line);
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--pf-canvas);
+    color: var(--pf-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.018em;
+    line-height: 1.2;
+  }
+
+  /* Every numeral in the product is tabular so timers and tables never jitter. */
+  .tnum,
+  [data-numeric] {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--pf-brand);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  button:not(:disabled),
+  a[href],
+  summary,
+  label[for] {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: var(--pf-brand-soft);
+    color: var(--pf-ink);
+  }
+
+  /* Scrollbars, tuned so a dense dashboard does not get a chrome-coloured gutter. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--pf-line-strong) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--pf-line-strong);
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /*
+  | The one card treatment in the product: flat fill plus a hairline. No
+  | shadows and no gradients -- depth comes from the luminance step between
+  | canvas and surface, which is what keeps a dense screen calm.
+  */
+  .pf-card {
+    background-color: var(--pf-surface);
+    border: 1px solid var(--pf-line);
+    border-radius: var(--radius-xl);
+  }
+
+  /* The vertical rail behind the roadmap timeline and the sprint history. */
+  .pf-rail {
+    background-image: linear-gradient(to bottom, var(--pf-line), var(--pf-line));
+    background-size: 1px 100%;
+    background-repeat: no-repeat;
+  }
+
+  .pf-shimmer {
+    background-image: linear-gradient(
+      90deg,
+      var(--pf-surface-2) 0%,
+      var(--pf-surface-3) 50%,
+      var(--pf-surface-2) 100%
+    );
+    background-size: 200% 100%;
+    animation: pf-shimmer 1.4s linear infinite;
+  }
+
+  /* Signature texture: a static grain, dark mode only, well under perceptual noise. */
+  .pf-grain::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: var(--pf-grain-opacity);
+    background-image: var(--pf-grain-image);
+  }
+}
+
+:root {
+  --pf-grain-image: repeating-conic-gradient(
+    from 0deg at 50% 50%,
+    rgb(255 255 255 / 0.6) 0deg 1deg,
+    transparent 1deg 2deg
+  );
+}
+
+@keyframes pf-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes pf-pulse-ember {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes pf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.pf-rise {
+  animation: pf-rise 0.28s var(--ease-out-quint) both;
+}
+
+.pf-pulse-ember {
+  animation: pf-pulse-ember 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

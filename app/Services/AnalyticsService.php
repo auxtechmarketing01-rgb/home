@@ -3,9 +3,11 @@
 namespace App\Services;
 
 use App\Models\Goal;
+use App\Models\Group;
 use App\Models\Sprint;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Builder;
 
 /**
  * FR-ANL-03: the cross-goal personal dashboard — time distribution by
@@ -48,6 +50,72 @@ class AnalyticsService
                 ]
                 : ['enabled' => false],
         ];
+    }
+
+    /**
+     * FR-ANL-01's heatmap calendar, per goal.
+     *
+     * The cross-goal `dailyTrend` below cannot serve this: it has no goal
+     * filter, so a per-goal heatmap built from it would show the member's
+     * total activity on every goal's page. An audit caught exactly that gap.
+     *
+     * @return list<array{date: string, focus_minutes: int}>
+     */
+    public function goalTrend(Goal $goal, int $days = 84): array
+    {
+        $timezone = $goal->user?->timezoneName() ?? 'UTC';
+
+        $itemIds = $goal->roadmapItems()->pluck('roadmap_items.id');
+
+        return $this->trendFrom(
+            Sprint::query()
+                ->completed()
+                ->whereNotNull('ended_at')
+                ->where(function ($query) use ($goal, $itemIds): void {
+                    $query->where('goal_id', $goal->id);
+
+                    if ($itemIds->isNotEmpty()) {
+                        $query->orWhereIn('roadmap_item_id', $itemIds);
+                    }
+                }),
+            $timezone,
+            $days,
+        );
+    }
+
+    /**
+     * FR-ANL-04's line-chart half: focus minutes per day per member, for the
+     * goals a group can actually see.
+     *
+     * The leaderboard answers "who is ahead" with one number per member and no
+     * time dimension, which is enough for a bar chart and useless for a line
+     * one. Bounded by the same shared-goal subquery as the leaderboard, so a
+     * private goal can no more appear here than there (01 §5 Privacy).
+     *
+     * @return list<array{user: array{id: int, name: string}, series: list<array{date: string, focus_minutes: int}>}>
+     */
+    public function groupTrend(Group $group, int $days = 28): array
+    {
+        $members = $group->members()->orderBy('name')->get(['users.id', 'users.name']);
+
+        if ($members->isEmpty()) {
+            return [];
+        }
+
+        $sharedGoalIds = Goal::query()->sharedWithGroup($group->id)->select('goals.id');
+
+        return $members->map(fn (User $member): array => [
+            'user' => ['id' => $member->id, 'name' => $member->name],
+            'series' => $this->trendFrom(
+                Sprint::query()
+                    ->completed()
+                    ->whereNotNull('ended_at')
+                    ->where('user_id', $member->id)
+                    ->whereIn('goal_id', $sharedGoalIds),
+                $member->timezoneName(),
+                $days,
+            ),
+        ])->all();
     }
 
     /**
@@ -104,13 +172,27 @@ class AnalyticsService
      */
     protected function dailyTrend(User $user, string $timezone, int $days): array
     {
+        return $this->trendFrom(
+            Sprint::query()->completed()->where('user_id', $user->id)->whereNotNull('ended_at'),
+            $timezone,
+            $days,
+        );
+    }
+
+    /**
+     * The shared day-bucketing used by all three trends: convert each
+     * timestamp into the relevant member's local date, then emit one entry per
+     * day in the window including the empty ones.
+     *
+     * @param  Builder<Sprint>  $query
+     * @return list<array{date: string, focus_minutes: int}>
+     */
+    protected function trendFrom($query, string $timezone, int $days): array
+    {
         $days = max(1, min(365, $days));
         $start = CarbonImmutable::now($timezone)->startOfDay()->subDays($days - 1);
 
-        $sprints = Sprint::query()
-            ->completed()
-            ->where('user_id', $user->id)
-            ->whereNotNull('ended_at')
+        $sprints = $query
             ->where('ended_at', '>=', $start->utc())
             ->get(['ended_at', 'actual_duration_seconds']);
 

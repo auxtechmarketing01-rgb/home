@@ -9,9 +9,9 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\IndexMentorshipRequest;
 use App\Http\Requests\RequestMentorshipRequest;
 use App\Http\Resources\MentorshipResource;
-use App\Models\Goal;
 use App\Models\Mentorship;
 use App\Models\User;
+use App\Services\MentorshipQueryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -24,24 +24,15 @@ class MentorshipController extends Controller
      * (02 §4). FR-MENT-03 allows many of each simultaneously, so `role`
      * filters the two directions apart.
      */
-    public function index(IndexMentorshipRequest $request): AnonymousResourceCollection
-    {
+    public function index(
+        IndexMentorshipRequest $request,
+        MentorshipQueryService $mentorships
+    ): AnonymousResourceCollection {
         $this->authorize('viewAny', Mentorship::class);
 
-        $user = $request->user();
-        $filters = $request->validated();
-
-        $query = Mentorship::query()->involving($user)->with(['mentor', 'mentee']);
-
-        if (($role = $filters['role'] ?? null) !== null) {
-            $query->where($role === 'mentor' ? 'mentor_id' : 'mentee_id', $user->id);
-        }
-
-        if (($status = $filters['status'] ?? null) !== null) {
-            $query->where('status', $status);
-        }
-
-        return MentorshipResource::collection($query->latest('id')->get());
+        return MentorshipResource::collection(
+            $mentorships->forUser($request->user(), $request->validated())
+        );
     }
 
     /**
@@ -118,43 +109,10 @@ class MentorshipController extends Controller
      * aggregation, and nothing here that GoalPolicy::view would not already
      * grant this mentor.
      */
-    public function dashboard(Request $request): JsonResponse
+    public function dashboard(Request $request, MentorshipQueryService $mentorships): JsonResponse
     {
-        $user = $request->user();
-
-        $mentorships = Mentorship::query()
-            ->accepted()
-            ->where('mentor_id', $user->id)
-            ->with(['mentee.streak'])
-            ->get();
-
-        $data = $mentorships->map(function (Mentorship $mentorship) {
-            $mentee = $mentorship->mentee;
-
-            $goals = Goal::query()
-                ->where('user_id', $mentee->id)
-                ->with('stats')
-                ->withCount('roadmapItems')
-                ->orderByDesc('created_at')
-                ->get();
-
-            return [
-                'mentorship_id' => $mentorship->id,
-                'mentee' => ['id' => $mentee->id, 'name' => $mentee->name],
-                'current_streak' => (int) ($mentee->streak?->current_streak ?? 0),
-                'longest_streak' => (int) ($mentee->streak?->longest_streak ?? 0),
-                'goals' => $goals->map(fn (Goal $goal): array => [
-                    'id' => $goal->id,
-                    'title' => $goal->title,
-                    'status' => $goal->status,
-                    'roadmap_item_count' => $goal->roadmap_items_count,
-                    'completion_percentage' => (float) ($goal->stats->completion_percentage ?? 0),
-                    'total_focus_seconds' => (int) ($goal->stats->total_focus_seconds ?? 0),
-                    'projected_completion_date' => $goal->stats?->projected_completion_date?->toDateString(),
-                ])->all(),
-            ];
-        })->all();
-
-        return response()->json(['data' => $data]);
+        return response()->json([
+            'data' => $mentorships->dashboardFor($request->user()),
+        ]);
     }
 }

@@ -14,6 +14,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * FR-RES-01/02. Attachments hang off either a Goal or a RoadmapItem, and both
@@ -56,6 +58,33 @@ class ResourceController extends Controller
         $this->authorize('update', $item);
 
         return $this->attachTo($request, $item, $createResource);
+    }
+
+    /**
+     * FR-RES-01's other half: reading the bytes back.
+     *
+     * Without this, an uploaded file could be stored and listed but never
+     * retrieved — the `disk`/`path` columns are deliberately not exposed in
+     * ResourceFileResource (02 §5), so there was no way for a client to reach
+     * the blob at all. Streaming it through the app rather than handing out a
+     * storage URL is what keeps `ResourceFilePolicy` in the loop: a signed S3
+     * link would outlive the permission that produced it.
+     */
+    public function download(ResourceFile $resource): StreamedResponse
+    {
+        $this->authorize('view', $resource);
+
+        abort_unless($resource->isStoredFile(), Response::HTTP_NOT_FOUND, 'This attachment has no file.');
+
+        $disk = Storage::disk($resource->disk);
+
+        abort_unless($disk->exists($resource->path), Response::HTTP_NOT_FOUND, 'The file is no longer stored.');
+
+        return $disk->download(
+            $resource->path,
+            $resource->title,
+            ['Content-Type' => $resource->mime_type ?: 'application/octet-stream'],
+        );
     }
 
     public function destroy(

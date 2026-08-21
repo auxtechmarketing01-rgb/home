@@ -24,7 +24,14 @@ return Application::configure(basePath: dirname(__DIR__))
      */
     ->withBroadcasting(
         __DIR__.'/../routes/channels.php',
-        attributes: ['prefix' => 'api/v1', 'middleware' => ['api', 'auth:sanctum']],
+        /**
+         * `active` is here as well as on the API route group: this endpoint
+         * hands out the credential that lets a client subscribe to a private
+         * channel, so a disabled account must not get one — otherwise it
+         * would keep receiving live notifications after being locked out
+         * (FR-ADM-01).
+         */
+        attributes: ['prefix' => 'api/v1', 'middleware' => ['api', 'auth:sanctum', 'active']],
     )
     ->withMiddleware(function (Middleware $middleware): void {
         /**

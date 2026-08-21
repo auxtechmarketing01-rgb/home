@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobFailed;
@@ -27,6 +28,32 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->configureRateLimiting();
         $this->configureJobFailureLogging();
+        $this->configureEmailedLinks();
+    }
+
+    /**
+     * Emailed links must land on the SPA, not on the API.
+     *
+     * Laravel's default ResetPassword notification builds its URL from a route
+     * named `password.reset`, which does not exist in a headless API — the
+     * mail would carry a link to nowhere and FR-AUTH-03 would be broken in
+     * exactly the half nobody tests (the token logic works fine either way).
+     *
+     * Email verification is the mirror image and deliberately different: that
+     * link points at the *API*, because the signature Laravel puts on it has
+     * to be verified by the app that issued it. The API then redirects to the
+     * SPA (AuthController::verifyEmail).
+     */
+    protected function configureEmailedLinks(): void
+    {
+        ResetPassword::createUrlUsing(function (object $notifiable, string $token): string {
+            $frontend = rtrim((string) config('app.frontend_url'), '/');
+
+            return $frontend.'/reset-password?'.http_build_query([
+                'token' => $token,
+                'email' => $notifiable->getEmailForPasswordReset(),
+            ]);
+        });
     }
 
     /**

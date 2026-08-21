@@ -123,6 +123,8 @@ Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
         ->name('roadmap-items.resources.index');
     Route::post('/roadmap-items/{item}/resources', [ResourceController::class, 'storeForItem'])
         ->name('roadmap-items.resources.store');
+    Route::get('/resources/{resource}/download', [ResourceController::class, 'download'])
+        ->name('resources.download');
     Route::delete('/resources/{resource}', [ResourceController::class, 'destroy'])->name('resources.destroy');
 
     /*
@@ -178,6 +180,8 @@ Route::middleware(['auth:sanctum', 'active'])->group(function (): void {
     Route::get('/goals/{goal}/stats', [AnalyticsController::class, 'goalStats'])->name('goals.stats');
     Route::get('/groups/{group}/leaderboard', [AnalyticsController::class, 'leaderboard'])
         ->name('groups.leaderboard');
+    Route::get('/groups/{group}/trend', [AnalyticsController::class, 'groupTrend'])
+        ->name('groups.trend');
     Route::get('/analytics/overview', [AnalyticsController::class, 'overview'])
         ->name('analytics.overview');
 

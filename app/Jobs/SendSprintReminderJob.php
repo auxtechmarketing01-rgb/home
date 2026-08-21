@@ -4,7 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Sprint;
 use App\Models\User;
-use App\Notifications\StreakAtRiskNotification;
+use App\Notifications\SprintReminderNotification;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -61,6 +61,6 @@ class SendSprintReminderJob implements ShouldQueue
             return;
         }
 
-        $user->notify(new StreakAtRiskNotification((int) ($user->streak?->current_streak ?? 0)));
+        $user->notify(new SprintReminderNotification($hour));
     }
 }

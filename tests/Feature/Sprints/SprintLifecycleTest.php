@@ -131,8 +131,33 @@ it('refuses to log time against another member roadmap item', function () {
     ])->assertForbidden();
 });
 
-it('requires a planned duration for every mode except stopwatch', function () {
+/**
+ * FR-SPR-02's "Defaults: 25/5". A bare pomodoro request is complete on its
+ * own — the client does not have to know the convention.
+ */
+it('applies the 25 and 5 minute pomodoro defaults', function () {
     $this->postJson('/api/v1/sprints/start', ['mode' => 'pomodoro'])
+        ->assertCreated()
+        ->assertJsonPath('data.planned_duration_seconds', 1500)
+        ->assertJsonPath('data.break_seconds', 300);
+});
+
+it('lets an explicit pomodoro duration win over the default', function () {
+    $this->postJson('/api/v1/sprints/start', [
+        'mode' => 'pomodoro',
+        'planned_duration_seconds' => 3000,
+        'break_seconds' => 600,
+    ])->assertCreated()
+        ->assertJsonPath('data.planned_duration_seconds', 3000)
+        ->assertJsonPath('data.break_seconds', 600);
+});
+
+/**
+ * Countdown has no convention to fall back on — a fixed duration the client
+ * did not choose would be a guess, so it stays required.
+ */
+it('requires a planned duration for a countdown', function () {
+    $this->postJson('/api/v1/sprints/start', ['mode' => 'countdown'])
         ->assertUnprocessable()
         ->assertJsonValidationErrors(['planned_duration_seconds']);
 });

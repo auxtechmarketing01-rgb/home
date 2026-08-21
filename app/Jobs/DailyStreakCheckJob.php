@@ -28,16 +28,35 @@ class DailyStreakCheckJob implements ShouldQueue
 
     public function handle(StreakService $streaks, GamificationService $gamification): void
     {
-        $reminderHour = (int) config('pathforge.streaks.reminder_hour');
-
         User::query()
             ->whereNull('disabled_at')
             ->with('streak')
-            ->chunkById(200, function ($users) use ($streaks, $gamification, $reminderHour): void {
+            ->chunkById(200, function ($users) use ($streaks, $gamification): void {
                 foreach ($users as $user) {
-                    $this->refresh($user, $streaks, $gamification, $reminderHour);
+                    $this->refresh($user, $streaks, $gamification, $this->reminderHourFor($user));
                 }
             });
+    }
+
+    /**
+     * FR-NOT-02 says "a configurable hour" and 02 §6 says "the **user's**
+     * configured reminder hour".
+     *
+     * An audit found only the app-wide config value being read, which meant
+     * one global evening for a group that can span timezones *and*
+     * personalities — the member who studies at 6am got the same 8pm nudge as
+     * everyone else. `settings.streak_reminder_hour` now takes precedence,
+     * with the config value as the fallback for anyone who never set one.
+     */
+    protected function reminderHourFor(User $user): int
+    {
+        $preferred = $user->settings['streak_reminder_hour'] ?? null;
+
+        if (is_int($preferred) && $preferred >= 0 && $preferred <= 23) {
+            return $preferred;
+        }
+
+        return (int) config('pathforge.streaks.reminder_hour');
     }
 
     protected function refresh(

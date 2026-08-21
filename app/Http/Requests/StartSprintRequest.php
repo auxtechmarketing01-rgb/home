@@ -19,6 +19,36 @@ class StartSprintRequest extends FormRequest
     }
 
     /**
+     * FR-SPR-02's "Defaults: 25/5" for Pomodoro.
+     *
+     * Applied here rather than in the Action so the defaults are part of the
+     * validated input the client gets echoed back — and so
+     * `config('pathforge.sprints.default_pomodoro_*')` is actually used
+     * rather than being config nobody reads. Only fills what the client
+     * omitted; an explicit value always wins.
+     */
+    protected function prepareForValidation(): void
+    {
+        if ($this->input('mode') !== 'pomodoro') {
+            return;
+        }
+
+        $defaults = [];
+
+        if ($this->input('planned_duration_seconds') === null) {
+            $defaults['planned_duration_seconds'] = (int) config('pathforge.sprints.default_pomodoro_work_seconds');
+        }
+
+        if ($this->input('break_seconds') === null) {
+            $defaults['break_seconds'] = (int) config('pathforge.sprints.default_pomodoro_break_seconds');
+        }
+
+        if ($defaults !== []) {
+            $this->merge($defaults);
+        }
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function rules(): array

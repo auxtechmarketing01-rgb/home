@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
 /**
  * FR-AUTH-02.
@@ -57,7 +58,7 @@ it('answers a request from an unrecognised origin with a clear error rather than
 
     /** Drop the first-party Referer the base TestCase adds. */
     $response = $this->withoutMiddleware(
-        Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class
+        EnsureFrontendRequestsAreStateful::class
     )->postJson('/api/v1/login', [
         'email' => 'member@example.test',
         'password' => 'correct-horse-battery',
